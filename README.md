@@ -6,7 +6,7 @@ The service is based on a PoC application which can be found [here](http://githu
 
 ## Tutorials
 
-### Installation
+### Add the service to a stack
 Add the service to your `docker-compose.yml`:
 
 ```
@@ -18,19 +18,64 @@ Add the service to your `docker-compose.yml`:
 
 ## Reference
 ### Configuration
-The following environment variables can be configured:
-* `INGEST_INTERVAL (in ms, default: 5000)`: interval at which the consumer needs to sync data
-* `SYNC_BASE_URL`: base URL of the stack hosting the producer API
+The following environment variables are required:
+* `SYNC_BASE_URL (required)`: base URL of the stack hosting the producer API (e.g. http://loket.lblod.info/)
+
+The following environment variables are optional:
 * `SYNC_FILES_PATH (default: /sync/mandatarissen/files)`: relative path to the endpoint to retrieve names of the diff files from
 * `DOWNLOAD_FILES_PATH (default: /files/:id/download)`: relative path to the endpoint to download a diff file from. `:id` will be replaced with the uuid of the file.
-* `MU_APPLICATION_GRAPH (default: http://mu.semte.ch/application)`: graph in which all data will be ingested
+* `MU_APPLICATION_GRAPH (default: http://mu.semte.ch/application)`: target graph in which all data will be ingested
+* `INGEST_INTERVAL (in ms, default: 60000)`: interval at which the consumer needs to sync data
+* `START_FROM_DELTA_TIMESTAMP (ISO datetime, default: now)`: timestamp to start sync data from (e.g. "2020-07-05T13:57:36.344Z")
+
+### Model
+#### Used prefixes
+| Prefix | URI                                                       |
+|--------|-----------------------------------------------------------|
+| dct    | http://purl.org/dc/terms/                                 |
+| adms   | http://www.w3.org/ns/adms#                                |
+| ext    | http://mu.semte.ch/vocabularies/ext                       |
+
+#### Sync task
+##### Class
+`ext:SyncTask`
+##### Properties
+| Name       | Predicate        | Range           | Definition                                                                                                                    |
+|------------|------------------|-----------------|-------------------------------------------------------------------------------------------------------------------------------|
+| status     | `adms:status`    | `adms:Status`   | Status of the sync task, initially set to `<http://lblod.data.gift/mandatendatabank-consumer-sync-task-statuses/not-started>` |
+| created    | `dct:created`    | `xsd:dateTime`  | Datetime of creation of the task                                                                                              |
+| creator    | `dct:creator`    | `rdfs:Resource` | Creator of the task, in this case the mandatendatabank-consumer `<http://lblod.data.gift/services/mandatendatabank-consumer>` |
+| deltaUntil | `ext:deltaUntil` | `xsd:dateTime`  | Datetime of the latest successfully ingested sync file as part of the task execution                                          |
+
+#### Sync task statuses
+The status of the sync task will be updated to reflect the progress of the task. The following statuses are known:
+* http://lblod.data.gift/mandatendatabank-consumer-sync-task-statuses/not-started
+* http://lblod.data.gift/mandatendatabank-consumer-sync-task-statuses/ongoing
+* http://lblod.data.gift/mandatendatabank-consumer-sync-task-statuses/success
+* http://lblod.data.gift/mandatendatabank-consumer-sync-task-statuses/failure
 
 ### Data flow
-At regular intervals, the service will execute the following steps:
+At regular intervals, the service will schedule a sync task. Execution of a task consists of the following steps:
 
-1. Query the producer service for all diff files since a specific timestamp
-2. Download each diff file
+1. Retrieve the timestamp to start the sync from
+1. Query the producer service for all diff files since that specific timestamp
+2. Download the content of each diff file
 3. Ingest each diff file in the `MU_APPLICATION_GRAPH`
 
+If one file fails to be ingested, the remaining files in the queue are blocked since the files must always be handled in order.
+
+The service makes 2 core assumptions that must be respected at all times:
+1. At any moment we know that the latest `ext:deltaUntil` timestamp on a task, either in failed/ongoing/success state, reflects the timestamp of the latest delta file that has been completly and successfully consumed
+2. Maximum 1 sync task is running at any moment in time
+
+### API
+```
+POST /ingest
+```
+
+Schedule and execute a sync task.
+
+The endpoint is triggered internally at frequent intervals and should normally not be triggered by an external party.
+
 ## Known limitations
-* No batching during ingest. May reach the limitation of number of triples to be inserted/deleted in 1 query.
+* No batching during ingest. Ingest requests to the database may reach the limitation of number of triples to be inserted/deleted in 1 query.
