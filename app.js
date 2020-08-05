@@ -3,6 +3,7 @@ import { app, errorHandler } from 'mu';
 import { INGEST_INTERVAL } from './config';
 import { getNextSyncTask, getRunningSyncTask, scheduleSyncTask } from './lib/sync-task';
 import { getUnconsumedFiles } from './lib/delta-file';
+import { waitForDatabase } from './lib/database-utils';
 
 /**
  * Core assumption of the microservice that must be respected at all times:
@@ -14,17 +15,13 @@ import { getUnconsumedFiles } from './lib/delta-file';
  * 2. Maximum 1 sync task is running at any moment in time
 */
 
-// TODO on startup:
-// - wait unitl DB is up
-// - move any task that is still in the ongoing state to the failed state
-
-function triggerIngest() {
+async function triggerIngest() {
   console.log(`Executing scheduled function at ${new Date().toISOString()}`);
   requestPromise.post('http://localhost/ingest/');
   setTimeout( triggerIngest, INGEST_INTERVAL );
 }
 
-triggerIngest();
+waitForDatabase(triggerIngest);
 
 app.post('/ingest', async function( req, res, next ) {
   await scheduleSyncTask();

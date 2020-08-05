@@ -6,7 +6,7 @@
     "@lblod/mu-auth-sudo": "^0.2.0",
     "fs-extra": "^8.0.1",
     "request": "^2.88.0",
-    "request-promise": "^4.2.4"
+    "request-promise": "^4.2.6"
   },
   "devDependencies": {},
   "scripts": {
