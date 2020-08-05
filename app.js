@@ -1,7 +1,7 @@
 import requestPromise from 'request-promise';
 import { app, errorHandler } from 'mu';
 import { INGEST_INTERVAL } from './config';
-import { getNextSyncTask, getRunningSyncTask, scheduleSyncTask } from './lib/sync-task';
+import { getNextSyncTask, getRunningSyncTask, scheduleSyncTask, setRunningSyncTaskToFailed } from './lib/sync-task';
 import { getUnconsumedFiles } from './lib/delta-file';
 import { waitForDatabase } from './lib/database-utils';
 
@@ -17,6 +17,11 @@ import { waitForDatabase } from './lib/database-utils';
 
 async function triggerIngest() {
   console.log(`Executing scheduled function at ${new Date().toISOString()}`);
+  const runningTask = await getRunningSyncTask();
+  if (runningTask) {
+    console.log(`Task ${runningTask.uri.value} is still ongoing at startup, updating its status to failed.`)
+    await setRunningSyncTaskToFailed(runningTask.uri.value);
+  }
   requestPromise.post('http://localhost/ingest/');
   setTimeout( triggerIngest, INGEST_INTERVAL );
 }
