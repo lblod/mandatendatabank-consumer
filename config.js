@@ -5,6 +5,7 @@ const SYNC_FILES_PATH = process.env.SYNC_FILES_PATH || '/sync/mandatarissen/file
 const SYNC_FILES_ENDPOINT = `${SYNC_BASE_URL}${SYNC_FILES_PATH}`;
 const DOWNLOAD_FILE_PATH = process.env.DOWNLOAD_FILE_PATH || '/files/:id/download';
 const DOWNLOAD_FILE_ENDPOINT = `${SYNC_BASE_URL}${DOWNLOAD_FILE_PATH}`;
+const BATCH_SIZE = parseInt(process.env.BATCH_SIZE) || 100;
 
 export {
   INGEST_INTERVAL,
