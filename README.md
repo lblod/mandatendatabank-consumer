@@ -77,6 +77,3 @@ POST /ingest
 Schedule and execute a sync task.
 
 The endpoint is triggered internally at frequent intervals and should normally not be triggered by an external party.
-
-## Known limitations
-* No batching during ingest. Ingest requests to the database may reach the limitation of number of triples to be inserted/deleted in 1 query.
