@@ -3,10 +3,11 @@
   "version": "0.1.4",
   "description": "Microservice to ingest diff files for Mandatendatabank in the database",
   "dependencies": {
-    "@lblod/mu-auth-sudo": "^0.2.0",
+    "@lblod/mu-auth-sudo": "git://github.com:lblod/mu-auth-sudo.git#bdbd063dc8e4d3a891c713a0077a54bc8a010ca1",
     "fs-extra": "^8.0.1",
     "request": "^2.88.0",
-    "request-promise": "^4.2.6"
+    "request-promise": "^4.2.6",
+    "node-fetch": "^2.6.1"
   },
   "devDependencies": {},
   "scripts": {
