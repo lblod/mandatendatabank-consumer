@@ -1,16 +1,29 @@
 import requestPromise from 'request-promise';
 import { app, errorHandler } from 'mu';
-import { INGEST_INTERVAL, SYNC_BASE_URL, STATUS_SUCCESS, STATUS_BUSY } from './config';
-import { getNextSyncTask, getRunningSyncTask, scheduleSyncTask, setTaskFailedStatus } from './lib/sync-task';
+import { INGEST_INTERVAL,
+         STATUS_SUCCESS,
+         STATUS_FAILED,
+         DISABLE_INITIAL_SYNC,
+         DISABLE_DELTA_INGEST,
+         INITIAL_SYNC_JOB_OPERATION
+       } from './config';
+import { getNextSyncTask,
+         getRunningSyncTask,
+         scheduleSyncTask,
+         setTaskFailedStatus,
+         createSyncTask,
+         TASK_SUCCESS_STATUS
+       } from './lib/sync-task';
 import { scheduleInitialSyncTask } from './lib/initial-sync-task';
 import { getLatestInitialSyncJob, scheduleInitialSyncJob } from './lib/initial-sync-job';
 import { getUnconsumedFiles } from './lib/delta-file';
 import { getLatestDumpFile } from './lib/dump-file';
 import { waitForDatabase } from './lib/database-utils';
+import { storeError, cleanupJobs, getJobs } from './lib/utils';
 
 /**
  * Core assumption of the microservice that must be respected at all times:
- *
+ * 0. An initial sync has run
  * 1. At any moment we know that the latest ext:deltaUntil timestamp
  *    on a task, either in failed/ongoing/success state, reflects
  *    the timestamp of the latest delta file that has been
@@ -24,21 +37,93 @@ async function triggerIngest() {
   setTimeout( triggerIngest, INGEST_INTERVAL );
 }
 
-async function triggerInitialSync() {
-  console.log(`Executing scheduled initial sync at ${new Date().toISOString()}`);
-  requestPromise.post('http://localhost/initial-sync/');
+async function runInitialSync(){
+  let job;
+  let task;
+
+  try {
+    //Note: they get status busy
+    job = await scheduleInitialSyncJob();
+    task = await scheduleInitialSyncTask(job);
+
+    const dumpFile = await getLatestDumpFile();
+    task.dumpFile = dumpFile;
+    task.execute();
+
+    //Some glue to coordinate the nex sync-task. It needs to know from where it needs to start syncing
+    await createSyncTask(task.dumpFile.issued, TASK_SUCCESS_STATUS);
+    await job.updateStatus(STATUS_SUCCESS);
+
+    return job;
+  }
+  catch(e) {
+    console.log(`Something went wrong while doing the initial sync. Closing task with failure state.`);
+    console.trace(e);
+    if(task)
+      await task.closeWithFailure(e);
+    if(job)
+      await job.closeWithFailure();
+  }
+  return null;
 }
 
 waitForDatabase(async () => {
-  const runningTask = await getRunningSyncTask();
-  if (runningTask) {
-    console.log(`Task <${runningTask.uri.value}> is still ongoing at startup. Updating its status to failed.`);
-    await setTaskFailedStatus(runningTask.uri.value);
+  try {
+
+    console.log('Database is up, proceeding with setup.');
+    console.info(`DISABLE_INITIAL_SYNC: ${DISABLE_INITIAL_SYNC}`);
+
+    if(!DISABLE_INITIAL_SYNC) {
+
+      const initialSyncJob = await getLatestInitialSyncJob();
+
+      //In following case we can safely (re)schedule an initial sync
+      if(!initialSyncJob || initialSyncJob.status == STATUS_FAILED){
+        console.log(`No initial sync has run yet, or previous failed (see: ${initialSyncJob ? initialSyncJob.uri : 'N/A'})`);
+        console.log(`(Re)starting initial sync`);
+
+        const job = await runInitialSync();
+
+        console.log(`${job.uri} has status ${job.status}, start ingesting deltas`);
+      }
+      else if(initialSyncJob.status !== STATUS_SUCCESS){
+        throw `Unexpected status for ${initialSyncJob.uri}: ${initialSyncJob.status}. Check in the database what went wrong`;
+      }
+
+    }
+    else {
+      console.warn('Initial sync disabled');
+    }
+
+    console.info(`DISABLE_DELTA_INGEST: ${DISABLE_DELTA_INGEST}`);
+    if(!DISABLE_DELTA_INGEST) {
+
+      //normal operation mode: ingest deltas
+      const runningTask = await getRunningSyncTask();
+      if (runningTask) {
+        console.log(`Task <${runningTask.uri.value}> is still ongoing at startup. Updating its status to failed.`);
+        await setTaskFailedStatus(runningTask.uri.value);
+      }
+
+      triggerIngest(); //don't wait because periodic/recursive job. Note: it won't catch errors!
+    }
+    else {
+      console.warn('Automated delta ingest disabled');
+    }
   }
-  triggerInitialSync();
+
+  catch(e) {
+    console.log(e);
+    await storeError(`Unexpected error while booting the service: ${e}`);
+  }
 });
 
-app.post('/ingest', async function( req, res, next ) {
+/*
+ * ENDPOINTS CURRENTLY MEANT FOR DEBUGGING
+ */
+app.post('/ingest', async function( _, res, next ) {
+  //TODO: it feels cleaner to move the logic to a separate function
+  //TODO: proper error logging so we get a mail!
   await scheduleSyncTask();
 
   const isRunning = await getRunningSyncTask();
@@ -68,50 +153,15 @@ app.post('/ingest', async function( req, res, next ) {
   }
 });
 
-app.post('/initial-sync', async function( req, res ) {
-  const previousJob = getLatestInitialSyncJob();
-  let job = null;
+app.post('/initial-sync-jobs', async function( _, res ){
+  runInitialSync();
+  res.send({ msg: 'Started initial sync job' });
+});
 
-  if (previousJob) {
-    if (previousJob.status == STATUS_SUCCESS) {
-      console.log(`Previous initial sync job <${previousJob.uri}> was a success, starting the ingestion of deltas.`);
-      triggerIngest();
-    } else {
-      if (previousJob.status == STATUS_BUSY) {
-        console.log(`Previous job ${previousJob.uri} seems to be stuck on busy, failing it.`);
-        previousJob.closeWithFailure();
-      }
-      console.log(`Latest previous job didn't end up as expected. Schedueling a new one.`);
-      job = await scheduleInitialSyncJob();
-    }
-  } else {
-    console.log(`No previous job found, schedueling one.`);
-    job = await scheduleInitialSyncJob();
-  }
-
-  if (job) {
-    const task = await scheduleInitialSyncTask(job);
-    console.log(`Start initial sync with ${SYNC_BASE_URL}`);
-    try {
-      const dumpFile = await getLatestDumpFile();
-      task.dumpFile = dumpFile;
-      task.execute();
-      job.updateStatus(STATUS_SUCCESS);
-      console.log(`Initial sync went smoothly, starting ingesting delta files.`);
-      triggerIngest();
-      return res.status(202).end();
-    } catch(e) {
-      console.log(`Something went wrong while doing the initial sync. Closing task with failure state.`);
-      console.trace(e);
-      await task.closeWithFailure(e);
-      await job.closeWithFailure();
-      console.log(`Error stored, stopping the service as the initial sync is mandatory.`);
-      process.exit();
-    }
-  } else {
-    console.log(`No scheduled initial sync task found.`);
-    return res.status(200).end();
-  }
+app.delete('/initial-sync-jobs', async function( _, res ){
+  const jobs = await getJobs(INITIAL_SYNC_JOB_OPERATION);
+  await cleanupJobs(jobs);
+  res.send({ msg: 'Initial sync jobs cleaned' });
 });
 
 app.use(errorHandler);
