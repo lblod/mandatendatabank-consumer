@@ -13,7 +13,7 @@ export const SYNC_DATASET_SUBJECT = process.env.SYNC_DATASET_SUBJECT;
 
 export const DOWNLOAD_FILE_PATH = process.env.DOWNLOAD_FILE_PATH || '/files/:id/download';
 export const DOWNLOAD_FILE_ENDPOINT = `${SYNC_BASE_URL}${DOWNLOAD_FILE_PATH}`;
-export const BATCH_SIZE = parseInt(process.env.BATCH_SIZE) || 500;
+export const BATCH_SIZE = parseInt(process.env.BATCH_SIZE) || 100;
 export const JOBS_GRAPH = process.env.JOBS_GRAPH || 'http://mu.semte.ch/graphs/system/jobs';
 
 export const MU_CALL_SCOPE_ID_INITIAL_SYNC = process.env.MU_CALL_SCOPE_ID_INITIAL_SYNC || 'http://redpencil.data.gift/id/concept/muScope/deltas/consumer/initialSync';
